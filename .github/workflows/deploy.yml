@@ -1,0 +1,48 @@
+name: Deploy CRM
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: crm-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update code over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          REPO: ${{ github.repository }}
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          envs: DEPLOY_PATH,REPO
+          script_stop: true
+          script: |
+            set -euo pipefail
+
+            echo "==> Deploying CRM to ${DEPLOY_PATH}"
+            mkdir -p "${DEPLOY_PATH}"
+            cd "${DEPLOY_PATH}"
+
+            if git remote get-url origin >/dev/null 2>&1; then
+              git fetch --prune origin main
+              git reset --hard origin/main
+              git clean -fd -e ".env" -e "config.php" -e "config.local.php" -e "uploads/" -e "storage/" -e "files/"
+            else
+              git init
+              git remote add origin "https://github.com/${REPO}.git"
+              git fetch origin main
+              git checkout -B main origin/main
+            fi
+
+            echo "==> Current revision: $(git rev-parse --short HEAD)"
+            # PHP 8.5: билд/зависимости/рестарт не требуются
