@@ -9,40 +9,106 @@ concurrency:
   group: crm-deploy
   cancel-in-progress: false
 
+env:
+  PHP_VERSION: "8.5"
+  PHP_BIN: /usr/local/php85/bin/php
+  SSH_PORT: ${{ secrets.SSH_PORT || 22 }}
+  HOST_KEY_FINGERPRINT: SHA256:f8R0Xldc8hBPfdyQVEm7+UMG3Y27F8TQDFMmips/+R0
+
 jobs:
-  deploy:
-    name: Deploy
+  verify:
+    name: Verify
     runs-on: ubuntu-latest
     steps:
-      - name: Update code over SSH
-        uses: appleboy/ssh-action@v1.2.0
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          coverage: none
+
+      - name: Syntax check
+        run: |
+          set -euo pipefail
+          find . -path ./.git -prune -o -name '*.php' -type f -print0 \
+            | xargs -0 -r -n1 -P4 php -l
+
+  deploy:
+    name: Deploy
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          ssh-keyscan -p "$SSH_PORT" -t rsa "$SSH_HOST" 2>/dev/null > ~/.ssh/known_hosts
+          fp="$(ssh-keygen -lf ~/.ssh/known_hosts | awk '{print $2}')"
+          if [ "$fp" != "$HOST_KEY_FINGERPRINT" ]; then
+            echo "::error::Host key fingerprint mismatch: got ${fp}"
+            exit 1
+          fi
+
+          cat > ~/.ssh/config <<EOF
+          Host nic-crm
+            HostName $SSH_HOST
+            User $SSH_USER
+            Port $SSH_PORT
+            IdentityFile ~/.ssh/deploy_key
+            IdentitiesOnly yes
+            PasswordAuthentication no
+            StrictHostKeyChecking yes
+            UserKnownHostsFile ~/.ssh/known_hosts
+            HostKeyAlgorithms +ssh-rsa
+            PubkeyAcceptedAlgorithms +ssh-rsa
+          EOF
+
+      - name: Deploy over SSH
         env:
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
           REPO: ${{ github.repository }}
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: ${{ secrets.SSH_PORT || 22 }}
-          envs: DEPLOY_PATH,REPO
-          script_stop: true
-          script: |
-            set -euo pipefail
+        run: |
+          set -euo pipefail
+          ssh nic-crm "DEPLOY_PATH='${DEPLOY_PATH}' REPO='${REPO}' PHP_BIN='${PHP_BIN}' bash -s" <<'REMOTE'
+          set -euo pipefail
 
-            echo "==> Deploying CRM to ${DEPLOY_PATH}"
-            mkdir -p "${DEPLOY_PATH}"
-            cd "${DEPLOY_PATH}"
+          DEPLOY_PATH="${DEPLOY_PATH/#\~/$HOME}"
+          echo "==> Deploying ${REPO} to ${DEPLOY_PATH}"
 
-            if git remote get-url origin >/dev/null 2>&1; then
-              git fetch --prune origin main
-              git reset --hard origin/main
-              git clean -fd -e ".env" -e "config.php" -e "config.local.php" -e "uploads/" -e "storage/" -e "files/"
-            else
-              git init
-              git remote add origin "https://github.com/${REPO}.git"
-              git fetch origin main
-              git checkout -B main origin/main
-            fi
+          mkdir -p "${DEPLOY_PATH}"
+          cd "${DEPLOY_PATH}"
 
-            echo "==> Current revision: $(git rev-parse --short HEAD)"
-            # PHP 8.5: билд/зависимости/рестарт не требуются
+          if [ -d .git ]; then
+            git fetch --prune origin main
+            git reset --hard origin/main
+          else
+            git init -q
+            git remote add origin "https://github.com/${REPO}.git"
+            git fetch --depth 1 origin main
+            git reset --hard FETCH_HEAD
+          fi
+
+          git clean -fdq -e .env -e vendor/ -e uploads/ -e storage/ -e files/ -e public/uploads/
+
+          if [ -f composer.json ]; then
+            echo "==> composer install"
+            "${PHP_BIN}" /usr/bin/composer install \
+              --no-dev --no-interaction --prefer-dist --optimize-autoloader
+          fi
+
+          if [ ! -f .env ] && [ -f .env.example ]; then
+            echo "::warning::.env отсутствует в ${DEPLOY_PATH} (есть .env.example)"
+          fi
+
+          echo "==> Deployed revision: $(git rev-parse --short HEAD)"
+          REMOTE
