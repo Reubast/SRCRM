@@ -12,7 +12,8 @@ concurrency:
 env:
   PHP_VERSION: "8.5"
   PHP_BIN: /usr/local/php85/bin/php
-  DEPLOY_PATH: /home/aic7997609/crm.aictx.ru/docs
+  APP_ROOT: /home/aic7997609/crm.aictx.ru/app
+  WEB_ROOT: /home/aic7997609/crm.aictx.ru/docs
   SSH_PORT: ${{ secrets.SSH_PORT || 22 }}
   HOST_KEY_FINGERPRINT: SHA256:f8R0Xldc8hBPfdyQVEm7+UMG3Y27F8TQDFMmips/+R0
 
@@ -26,6 +27,7 @@ jobs:
       - uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ env.PHP_VERSION }}
+          extensions: mbstring, pdo_mysql, xml, ctype, tokenizer, curl, fileinfo, openssl, zip
           coverage: none
 
       - name: Syntax check
@@ -34,12 +36,27 @@ jobs:
           find . -path ./.git -prune -o -name '*.php' -type f -print0 \
             | xargs -0 -r -n1 -P4 php -l
 
+      - name: Validate composer.json
+        run: composer validate --no-check-all --no-check-publish
+
   deploy:
     name: Deploy
     needs: verify
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          extensions: mbstring, pdo_mysql, xml, ctype, tokenizer, curl, fileinfo, openssl, zip
+          coverage: none
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          composer install --no-dev --no-interaction --prefer-dist \
+            --optimize-autoloader --no-progress
 
       - name: Configure SSH
         env:
@@ -74,19 +91,16 @@ jobs:
             PubkeyAcceptedAlgorithms +ssh-rsa
           EOF
 
-      - name: Deploy over SSH
+      - name: Sync code
         env:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          ssh nic-crm "DEPLOY_PATH='${DEPLOY_PATH}' REPO='${REPO}' PHP_BIN='${PHP_BIN}' bash -s" <<'REMOTE'
+          ssh nic-crm "REPO='${REPO}' APP_ROOT='${APP_ROOT}' WEB_ROOT='${WEB_ROOT}' bash -s" <<'REMOTE'
           set -euo pipefail
 
-          DEPLOY_PATH="${DEPLOY_PATH/#\~/$HOME}"
-          echo "==> Deploying ${REPO} to ${DEPLOY_PATH}"
-
-          mkdir -p "${DEPLOY_PATH}"
-          cd "${DEPLOY_PATH}"
+          mkdir -p "${APP_ROOT}"
+          cd "${APP_ROOT}"
 
           if [ -d .git ]; then
             git fetch --prune origin main
@@ -98,17 +112,38 @@ jobs:
             git reset --hard FETCH_HEAD
           fi
 
-          git clean -fdq -e .env -e vendor/ -e uploads/ -e storage/ -e files/ -e public/uploads/
+          git clean -fdq -e .env -e vendor/ -e storage/
 
-          if [ -f composer.json ]; then
-            echo "==> composer install"
-            "${PHP_BIN}" /usr/bin/composer install \
-              --no-dev --no-interaction --prefer-dist --optimize-autoloader
+          mkdir -p storage/framework/cache/data storage/framework/sessions \
+                   storage/framework/views storage/logs bootstrap/cache
+
+          if [ ! -L "${WEB_ROOT}" ]; then
+            rm -rf "${WEB_ROOT}"
+            ln -s "${APP_ROOT}/public" "${WEB_ROOT}"
           fi
 
-          if [ ! -f .env ] && [ -f .env.example ]; then
-            echo "::warning::.env отсутствует в ${DEPLOY_PATH} (есть .env.example)"
-          fi
+          echo "==> Code at $(git rev-parse --short HEAD)"
+          REMOTE
 
-          echo "==> Deployed revision: $(git rev-parse --short HEAD)"
+      - name: Upload vendor
+        run: |
+          set -euo pipefail
+          tar -czf - vendor | ssh nic-crm "tar -xzf - -C '${APP_ROOT}'"
+
+      - name: Migrate and optimize
+        run: |
+          set -euo pipefail
+          ssh nic-crm "APP_ROOT='${APP_ROOT}' PHP_BIN='${PHP_BIN}' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "${APP_ROOT}"
+
+          chmod -R ug+rwX storage bootstrap/cache
+
+          "${PHP_BIN}" artisan migrate --force
+          "${PHP_BIN}" artisan db:seed --force
+          "${PHP_BIN}" artisan package:discover --ansi
+          "${PHP_BIN}" artisan optimize
+          "${PHP_BIN}" artisan storage:link || true
+
+          echo "==> Deployed: $("${PHP_BIN}" artisan --version)"
           REMOTE
