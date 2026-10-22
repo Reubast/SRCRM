@@ -12,6 +12,7 @@ concurrency:
 env:
   PHP_VERSION: "8.5"
   PHP_BIN: /usr/local/php85/bin/php
+  DEPLOY_PATH: /home/aic7997609/crm.aictx.ru/docs
   SSH_PORT: ${{ secrets.SSH_PORT || 22 }}
   HOST_KEY_FINGERPRINT: SHA256:f8R0Xldc8hBPfdyQVEm7+UMG3Y27F8TQDFMmips/+R0
 
@@ -75,7 +76,6 @@ jobs:
 
       - name: Deploy over SSH
         env:
-          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
