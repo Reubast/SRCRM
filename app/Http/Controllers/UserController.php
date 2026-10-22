@@ -31,7 +31,7 @@ class UserController extends Controller
 
         User::query()->create($data);
 
-        return redirect()->route('users.index')->with('status', 'Сотрудник создан.');
+        return redirect()->route('users.index')->with('status', 'Пользователь создан.');
     }
 
     public function edit(User $user): View
@@ -48,12 +48,12 @@ class UserController extends Controller
         }
 
         if ($user->id === $request->user()->id && ($data['role'] ?? null) !== User::ROLE_ADMIN) {
-            return back()->withErrors(['role' => 'Нельзя снять с себя роль администратора.']);
+            return back()->withErrors(['role' => 'Нельзя снять роль администратора с самого себя.']);
         }
 
         $user->update($data);
 
-        return redirect()->route('users.index')->with('status', 'Сотрудник обновлён.');
+        return redirect()->route('users.index')->with('status', 'Пользователь обновлён.');
     }
 
     public function destroy(Request $request, User $user): RedirectResponse
@@ -64,7 +64,7 @@ class UserController extends Controller
 
         $user->delete();
 
-        return redirect()->route('users.index')->with('status', 'Сотрудник удалён.');
+        return redirect()->route('users.index')->with('status', 'Пользователь удалён.');
     }
 
     /**

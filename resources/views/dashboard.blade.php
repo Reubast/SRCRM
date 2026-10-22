@@ -1,28 +1,29 @@
 @extends('layouts.app')
 
-@section('title', 'Дашборд — SRCRM')
+@section('title', 'Обзор · TaskFlow')
 
 @section('content')
-    <h1>Дашборд</h1>
-    <p class="muted">Привет, {{ $user->name }}. Роль: <strong>{{ $user->role }}</strong>.</p>
+    <h1>Обзор</h1>
+    <p class="muted">Привет, {{ $user->name }}. Ваша роль: <strong>{{ $user->role }}</strong>.</p>
 
     <div class="cards">
         <div class="card">
             <div class="card-value">{{ $users->count() }}</div>
-            <div class="card-label">Сотрудников</div>
+            <div class="card-label">Пользователей</div>
         </div>
         <div class="card">
-            <div class="card-value">0</div>
-            <div class="card-label">Клиентов</div>
+            <div class="card-value">{{ $users->where('role', 'admin')->count() }}</div>
+            <div class="card-label">Администраторов</div>
         </div>
         <div class="card">
-            <div class="card-value">0</div>
-            <div class="card-label">Сделок в работе</div>
+            <div class="card-value">{{ $users->where('role', 'manager')->count() }}</div>
+            <div class="card-label">Менеджеров</div>
         </div>
     </div>
 
     <div class="panel">
-        <h2>Модули CRM</h2>
-        <p class="muted">Клиенты, сделки, задачи и заметки появятся после утверждения ТЗ.</p>
+        <h2>TaskFlow</h2>
+        <p class="muted">Канбан, календарь и задачи доступны в основном приложении. Данные задач хранятся локально в браузере и экспортируются в JSON.</p>
+        <p><a class="btn btn-primary" href="/">Открыть TaskFlow</a></p>
     </div>
 @endsection

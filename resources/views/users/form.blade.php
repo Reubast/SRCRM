@@ -1,9 +1,9 @@
 @extends('layouts.app')
 
-@section('title', $user->exists ? 'Изменить сотрудника — SRCRM' : 'Новый сотрудник — SRCRM')
+@section('title', $user->exists ? 'Изменить пользователя · TaskFlow' : 'Новый пользователь · TaskFlow')
 
 @section('content')
-    <h1>{{ $user->exists ? 'Изменить сотрудника' : 'Новый сотрудник' }}</h1>
+    <h1>{{ $user->exists ? 'Изменить пользователя' : 'Новый пользователь' }}</h1>
 
     <div class="panel">
         <form method="POST"
@@ -35,7 +35,7 @@
                 <input type="password" name="password" autocomplete="new-password" @required(! $user->exists)>
             </label>
             <label>
-                Повтор пароля
+                Повторите пароль
                 <input type="password" name="password_confirmation" autocomplete="new-password">
             </label>
 

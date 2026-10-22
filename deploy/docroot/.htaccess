@@ -5,6 +5,8 @@
 
     RewriteEngine On
 
+    DirectoryIndex index.html
+
     # Force HTTPS (Apache behind nginx: trust X-Forwarded-Proto)
     RewriteCond %{HTTPS} !=on
     RewriteCond %{HTTP:X-Forwarded-Proto} !https
@@ -23,8 +25,15 @@
     RewriteCond %{REQUEST_URI} (.+)/$
     RewriteRule ^ %1 [L,R=301]
 
-    # Send Requests To Front Controller...
-    RewriteCond %{REQUEST_FILENAME} !-d
-    RewriteCond %{REQUEST_FILENAME} !-f
-    RewriteRule ^ index.php [L]
+    # Laravel: API, admin area and health check
+    RewriteRule ^(api|admin)(/|$) index.php [L]
+    RewriteRule ^up$ index.php [L]
+
+    # Existing files and directories are served as-is
+    RewriteCond %{REQUEST_FILENAME} -f [OR]
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteRule ^ - [L]
+
+    # SPA fallback for client-side routes
+    RewriteRule ^ index.html [L]
 </IfModule>

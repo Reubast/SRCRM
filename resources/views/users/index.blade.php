@@ -1,10 +1,10 @@
 @extends('layouts.app')
 
-@section('title', 'Сотрудники — SRCRM')
+@section('title', 'Пользователи · TaskFlow')
 
 @section('content')
     <div class="page-head">
-        <h1>Сотрудники</h1>
+        <h1>Пользователи</h1>
         <a class="btn btn-primary" href="{{ route('users.create') }}">Добавить</a>
     </div>
 
@@ -28,7 +28,7 @@
                         <a class="btn btn-ghost" href="{{ route('users.edit', $user) }}">Изменить</a>
                         @if ($user->id !== auth()->id())
                             <form method="POST" action="{{ route('users.destroy', $user) }}"
-                                  onsubmit="return confirm('Удалить сотрудника?')">
+                                  onsubmit="return confirm('Удалить пользователя?')">
                                 @csrf
                                 @method('DELETE')
                                 <button type="submit" class="btn btn-danger">Удалить</button>
@@ -38,7 +38,7 @@
                 </tr>
             @empty
                 <tr>
-                    <td colspan="4" class="muted">Пока никого нет.</td>
+                    <td colspan="4" class="muted">Пользователей нет.</td>
                 </tr>
             @endforelse
             </tbody>
