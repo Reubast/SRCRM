@@ -117,11 +117,6 @@ jobs:
           mkdir -p storage/framework/cache/data storage/framework/sessions \
                    storage/framework/views storage/logs bootstrap/cache
 
-          if [ ! -L "${WEB_ROOT}" ]; then
-            rm -rf "${WEB_ROOT}"
-            ln -s "${APP_ROOT}/public" "${WEB_ROOT}"
-          fi
-
           echo "==> Code at $(git rev-parse --short HEAD)"
           REMOTE
 
@@ -129,6 +124,25 @@ jobs:
         run: |
           set -euo pipefail
           tar -czf - vendor | ssh nic-crm "tar -xzf - -C '${APP_ROOT}'"
+
+      - name: Publish docroot
+        run: |
+          set -euo pipefail
+          ssh nic-crm "APP_ROOT='${APP_ROOT}' WEB_ROOT='${WEB_ROOT}' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          mkdir -p "${WEB_ROOT}"
+          rsync -a --delete \
+            --exclude 'index.php' --exclude '.htaccess' --exclude 'robots.txt' --exclude 'storage' \
+            "${APP_ROOT}/public/" "${WEB_ROOT}/"
+
+          install -m 644 "${APP_ROOT}/deploy/docroot/index.php" "${WEB_ROOT}/index.php"
+          install -m 644 "${APP_ROOT}/deploy/docroot/.htaccess" "${WEB_ROOT}/.htaccess"
+          install -m 644 "${APP_ROOT}/deploy/docroot/robots.txt" "${WEB_ROOT}/robots.txt"
+          ln -sfn "${APP_ROOT}/storage/app/public" "${WEB_ROOT}/storage"
+
+          echo "==> Docroot published to ${WEB_ROOT}"
+          REMOTE
 
       - name: Migrate and optimize
         run: |
