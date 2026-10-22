@@ -1,0 +1,10 @@
+.env
+.env.*
+!.env.example
+vendor/
+uploads/
+storage/
+files/
+public/uploads/
+*.log
+.DS_Store
