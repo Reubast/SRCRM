@@ -168,7 +168,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [tasks, setTasks] = useState<Task[]>([])
   const [timeEntries, setTimeEntries] = useState<TimeEntry[]>([])
   const [ready, setReady] = useState(false)
+  const [dbBlocked, setDbBlocked] = useState(false)
   const [theme, setThemeState] = useState<Theme>(readStoredTheme)
+
+  useEffect(() => store.onDbBlocked(() => setDbBlocked(true)), [])
 
   useEffect(() => {
     let cancelled = false
@@ -194,6 +197,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       setColumns(nextColumns)
       setTasks(loaded.tasks)
       setTimeEntries(loaded.timeEntries)
+      setDbBlocked(false)
       setReady(true)
     }
 
@@ -474,7 +478,31 @@ export function DataProvider({ children }: { children: ReactNode }) {
     ],
   )
 
-  return <DataContext.Provider value={value}>{children}</DataContext.Provider>
+  return (
+    <DataContext.Provider value={value}>
+      {dbBlocked && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/70 p-4 backdrop-blur-sm">
+          <div className="max-w-md rounded-2xl bg-white p-5 shadow-2xl dark:bg-slate-900">
+            <h2 className="text-base font-semibold text-slate-900 dark:text-white">
+              Нужно обновить локальное хранилище
+            </h2>
+            <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
+              Откройте TaskFlow только в одной вкладке: закройте другие вкладки с приложением и
+              обновите страницу.
+            </p>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="mt-4 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-500"
+            >
+              Обновить
+            </button>
+          </div>
+        </div>
+      )}
+      {children}
+    </DataContext.Provider>
+  )
 }
 
 export function useData(): DataValue {

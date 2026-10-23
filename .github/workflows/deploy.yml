@@ -148,6 +148,7 @@ jobs:
           mkdir -p "${WEB_ROOT}"
           rsync -a --delete \
             --exclude 'index.php' --exclude '.htaccess' --exclude 'robots.txt' --exclude 'storage' \
+            --exclude 'assets' --exclude 'index.html' --exclude 'favicon.svg' \
             "${APP_ROOT}/public/" "${WEB_ROOT}/"
 
           install -m 644 "${APP_ROOT}/deploy/docroot/index.php" "${WEB_ROOT}/index.php"
@@ -162,7 +163,7 @@ jobs:
         run: |
           set -euo pipefail
           tar -czf - -C frontend/dist . \
-            | ssh nic-crm "rm -rf '${WEB_ROOT}/assets' && tar -xzf - -C '${WEB_ROOT}' && chmod -R a+rX '${WEB_ROOT}' && echo '==> SPA published'"
+            | ssh nic-crm "mkdir -p '${WEB_ROOT}/assets' && tar -xzf - -C '${WEB_ROOT}' && find '${WEB_ROOT}/assets' -type f -mtime +30 -delete && chmod -R a+rX '${WEB_ROOT}' && echo '==> SPA published'"
 
       - name: Migrate and optimize
         run: |

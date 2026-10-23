@@ -24,6 +24,21 @@ const DB_NAME = 'taskflow'
 const DB_VERSION = 2
 
 let dbPromise: Promise<IDBPDatabase<TaskFlowDB>> | null = null
+const blockedListeners = new Set<() => void>()
+
+export function onDbBlocked(listener: () => void): () => void {
+  blockedListeners.add(listener)
+
+  return () => {
+    blockedListeners.delete(listener)
+  }
+}
+
+function notifyBlocked() {
+  for (const listener of blockedListeners) {
+    listener()
+  }
+}
 
 function db(): Promise<IDBPDatabase<TaskFlowDB>> {
   if (!dbPromise) {
@@ -41,6 +56,9 @@ function db(): Promise<IDBPDatabase<TaskFlowDB>> {
         if (!database.objectStoreNames.contains('settings')) {
           database.createObjectStore('settings')
         }
+      },
+      blocked() {
+        notifyBlocked()
       },
     })
   }
