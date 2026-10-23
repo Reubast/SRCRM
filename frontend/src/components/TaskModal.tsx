@@ -5,6 +5,7 @@ import { PRIORITIES } from '../lib/types'
 import {
   formatDateTime,
   fromDateTimeInput,
+  minutesLabel,
   progressOf,
   toDateTimeInput,
 } from '../lib/utils'
@@ -12,6 +13,7 @@ import {
 interface TaskModalProps {
   taskId?: string
   defaultColumnId?: string
+  defaultStartAt?: string | null
   defaultDeadline?: string | null
   defaultOrder?: number
   onClose: () => void
@@ -22,14 +24,38 @@ const fieldClass =
 
 const labelClass = 'flex flex-col gap-1 text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400'
 
+function todayValue(): string {
+  const date = new Date()
+  const pad = (value: number) => String(value).padStart(2, '0')
+
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
+
+function entryDateLabel(date: string): string {
+  const [year, month, day] = date.split('-')
+
+  return year && month && day ? `${day}.${month}.${year}` : date
+}
+
 export function TaskModal({
   taskId,
   defaultColumnId,
+  defaultStartAt = null,
   defaultDeadline = null,
   defaultOrder = 0,
   onClose,
 }: TaskModalProps) {
-  const { columns, tasks, saveTask, patchTask, deleteTask, toggleTask } = useData()
+  const {
+    columns,
+    tasks,
+    timeEntries,
+    saveTask,
+    patchTask,
+    deleteTask,
+    toggleTask,
+    addTimeEntry,
+    deleteTimeEntry,
+  } = useData()
   const task = taskId ? tasks.find((item) => item.id === taskId) : undefined
   const sortedColumns = useMemo(
     () => [...columns].sort((a, b) => a.order - b.order),
@@ -42,10 +68,17 @@ export function TaskModal({
     task?.columnId ?? defaultColumnId ?? sortedColumns[0]?.id ?? '',
   )
   const [priority, setPriority] = useState<Priority>(task?.priority ?? 'medium')
+  const [startAt, setStartAt] = useState(toDateTimeInput(task?.startAt ?? defaultStartAt))
   const [deadline, setDeadline] = useState(toDateTimeInput(task?.deadline ?? defaultDeadline))
   const [subtaskTitle, setSubtaskTitle] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  const [entryDate, setEntryDate] = useState(todayValue)
+  const [entryMinutes, setEntryMinutes] = useState('30')
+  const [entryNote, setEntryNote] = useState('')
+  const [timeError, setTimeError] = useState<string | null>(null)
+  const [savingTime, setSavingTime] = useState(false)
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -69,6 +102,17 @@ export function TaskModal({
     [task, tasks],
   )
 
+  const taskEntries = useMemo(
+    () =>
+      task
+        ? timeEntries
+            .filter((entry) => entry.taskId === task.id)
+            .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt))
+        : [],
+    [task, timeEntries],
+  )
+
+  const totalMinutes = taskEntries.reduce((total, entry) => total + entry.minutes, 0)
   const progress = task ? progressOf(task, tasks, columns) : null
   const parent = task?.parentId ? tasks.find((item) => item.id === task.parentId) : undefined
 
@@ -76,6 +120,14 @@ export function TaskModal({
     event.preventDefault()
 
     if (!title.trim() || !columnId) {
+      return
+    }
+
+    const nextStart = fromDateTimeInput(startAt)
+    const nextDeadline = fromDateTimeInput(deadline)
+
+    if (nextStart && nextDeadline && nextStart > nextDeadline) {
+      setError('Начало не может быть позже дедлайна.')
       return
     }
 
@@ -89,7 +141,8 @@ export function TaskModal({
           description,
           columnId,
           priority,
-          deadline: fromDateTimeInput(deadline),
+          startAt: nextStart,
+          deadline: nextDeadline,
           parentId: task?.parentId ?? null,
           completed: task?.completed ?? false,
           order: task?.order ?? defaultOrder,
@@ -135,6 +188,7 @@ export function TaskModal({
       description: '',
       columnId: task.columnId,
       priority: task.priority,
+      startAt: null,
       deadline: null,
       parentId: task.id,
       completed: false,
@@ -142,6 +196,36 @@ export function TaskModal({
     })
 
     setSubtaskTitle('')
+  }
+
+  async function handleAddTime() {
+    if (!task) {
+      return
+    }
+
+    const minutes = Number(entryMinutes)
+
+    if (!Number.isFinite(minutes) || minutes <= 0) {
+      setTimeError('Укажите количество минут больше нуля.')
+      return
+    }
+
+    setSavingTime(true)
+    setTimeError(null)
+
+    try {
+      await addTimeEntry({
+        taskId: task.id,
+        date: entryDate,
+        minutes,
+        note: entryNote,
+      })
+      setEntryNote('')
+    } catch {
+      setTimeError('Не удалось добавить трудозатраты.')
+    } finally {
+      setSavingTime(false)
+    }
   }
 
   function stopPropagation(event: MouseEvent) {
@@ -213,7 +297,7 @@ export function TaskModal({
             />
           </label>
 
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-2">
             <label className={labelClass}>
               Колонка
               <select
@@ -245,6 +329,16 @@ export function TaskModal({
             </label>
 
             <label className={labelClass}>
+              Начало
+              <input
+                type="datetime-local"
+                className={fieldClass}
+                value={startAt}
+                onChange={(event) => setStartAt(event.target.value)}
+              />
+            </label>
+
+            <label className={labelClass}>
               Дедлайн
               <input
                 type="datetime-local"
@@ -254,6 +348,88 @@ export function TaskModal({
               />
             </label>
           </div>
+
+          {task && (
+            <div className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                  Трудозатраты {totalMinutes > 0 && `(${minutesLabel(totalMinutes)})`}
+                </h3>
+                <span className="text-xs text-slate-400 dark:text-slate-500">Всего по задаче</span>
+              </div>
+
+              {taskEntries.length > 0 && (
+                <ul className="mt-2 divide-y divide-slate-100 dark:divide-slate-800">
+                  {taskEntries.map((entry) => (
+                    <li key={entry.id} className="flex items-center gap-2 py-1.5">
+                      <span className="w-20 shrink-0 text-xs text-slate-500 dark:text-slate-400">
+                        {entryDateLabel(entry.date)}
+                      </span>
+                      <span className="shrink-0 text-sm font-medium text-slate-800 dark:text-slate-100">
+                        {minutesLabel(entry.minutes)}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-xs text-slate-500 dark:text-slate-400">
+                        {entry.note || '—'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => void deleteTimeEntry(entry.id)}
+                        className="rounded px-1.5 py-1 text-xs font-medium text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10 dark:hover:text-rose-400"
+                      >
+                        Удалить
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              <div className="mt-3 flex flex-wrap items-end gap-2">
+                <label className="flex flex-col gap-1 text-xs font-medium text-slate-500 dark:text-slate-400">
+                  Дата
+                  <input
+                    type="date"
+                    value={entryDate}
+                    onChange={(event) => setEntryDate(event.target.value)}
+                    className="rounded border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+                  />
+                </label>
+
+                <label className="flex flex-col gap-1 text-xs font-medium text-slate-500 dark:text-slate-400">
+                  Минуты
+                  <input
+                    type="number"
+                    min={1}
+                    max={1440}
+                    step={5}
+                    value={entryMinutes}
+                    onChange={(event) => setEntryMinutes(event.target.value)}
+                    className="w-20 rounded border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+                  />
+                </label>
+
+                <label className="flex min-w-[10rem] flex-1 flex-col gap-1 text-xs font-medium text-slate-500 dark:text-slate-400">
+                  Комментарий
+                  <input
+                    value={entryNote}
+                    onChange={(event) => setEntryNote(event.target.value)}
+                    placeholder="Что делали"
+                    className="rounded border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+                  />
+                </label>
+
+                <button
+                  type="button"
+                  onClick={() => void handleAddTime()}
+                  disabled={savingTime}
+                  className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700 disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
+                >
+                  Добавить
+                </button>
+              </div>
+
+              {timeError && <p className="mt-2 text-xs text-rose-600 dark:text-rose-400">{timeError}</p>}
+            </div>
+          )}
 
           {task && !task.parentId && (
             <div className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
@@ -319,7 +495,7 @@ export function TaskModal({
 
           {!task && (
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Сохраните задачу, чтобы добавить подзадачи.
+              Сохраните задачу, чтобы добавить подзадачи и трудозатраты.
             </p>
           )}
 

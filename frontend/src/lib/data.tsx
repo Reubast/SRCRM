@@ -8,11 +8,21 @@ import {
   type ReactNode,
 } from 'react'
 import * as store from './db'
-import type { Column, ExportPayload, Priority, Task, TaskDraft, Theme } from './types'
+import type {
+  Column,
+  ExportPayload,
+  Priority,
+  Task,
+  TaskDraft,
+  Theme,
+  TimeEntry,
+  TimeEntryDraft,
+} from './types'
 
 interface DataValue {
   columns: Column[]
   tasks: Task[]
+  timeEntries: TimeEntry[]
   ready: boolean
   theme: Theme
   setTheme: (theme: Theme) => void
@@ -24,6 +34,8 @@ interface DataValue {
   patchTask: (id: string, patch: Partial<Task>) => Promise<void>
   deleteTask: (id: string) => Promise<void>
   toggleTask: (id: string) => Promise<void>
+  addTimeEntry: (draft: TimeEntryDraft) => Promise<void>
+  deleteTimeEntry: (id: string) => Promise<void>
   importData: (payload: ExportPayload) => Promise<void>
   resetData: () => Promise<void>
 }
@@ -31,12 +43,24 @@ interface DataValue {
 const DataContext = createContext<DataValue | null>(null)
 
 const PRIORITY_VALUES: Priority[] = ['low', 'medium', 'high']
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
-function normalizeImport(payload: ExportPayload): { columns: Column[]; tasks: Task[] } {
+function todayDate(): string {
+  const date = new Date()
+  const pad = (value: number) => String(value).padStart(2, '0')
+
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
+
+function normalizeImport(payload: ExportPayload): {
+  columns: Column[]
+  tasks: Task[]
+  timeEntries: TimeEntry[]
+} {
   if (!isRecord(payload) || !Array.isArray(payload.columns) || !Array.isArray(payload.tasks)) {
     throw new Error('Файл не похож на экспорт TaskFlow.')
   }
@@ -74,6 +98,7 @@ function normalizeImport(payload: ExportPayload): { columns: Column[]; tasks: Ta
         description: typeof item.description === 'string' ? item.description : '',
         columnId: columnIds.has(item.columnId as string) ? (item.columnId as string) : columns[0].id,
         priority,
+        startAt: typeof item.startAt === 'string' ? item.startAt : null,
         deadline: typeof item.deadline === 'string' ? item.deadline : null,
         completed: item.completed === true,
         order: typeof item.order === 'number' ? item.order : 0,
@@ -99,7 +124,35 @@ function normalizeImport(payload: ExportPayload): { columns: Column[]; tasks: Ta
     }
   }
 
-  return { columns, tasks }
+  const rawEntries = Array.isArray((payload as { timeEntries?: unknown }).timeEntries)
+    ? ((payload as { timeEntries: unknown[] }).timeEntries)
+    : []
+
+  const timeEntries: TimeEntry[] = rawEntries
+    .filter(
+      (raw) =>
+        isRecord(raw) &&
+        typeof raw.id === 'string' &&
+        typeof raw.taskId === 'string' &&
+        taskIds.has(raw.taskId),
+    )
+    .map((raw) => {
+      const item = raw as unknown as Record<string, unknown>
+      const minutes = typeof item.minutes === 'number' && item.minutes > 0
+        ? Math.min(1440, Math.round(item.minutes))
+        : 30
+
+      return {
+        id: item.id as string,
+        taskId: item.taskId as string,
+        date: typeof item.date === 'string' && DATE_PATTERN.test(item.date) ? item.date : todayDate(),
+        minutes,
+        note: typeof item.note === 'string' ? item.note : '',
+        createdAt: typeof item.createdAt === 'string' ? item.createdAt : now,
+      }
+    })
+
+  return { columns, tasks, timeEntries }
 }
 
 function readStoredTheme(): Theme {
@@ -113,6 +166,7 @@ function readStoredTheme(): Theme {
 export function DataProvider({ children }: { children: ReactNode }) {
   const [columns, setColumns] = useState<Column[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
+  const [timeEntries, setTimeEntries] = useState<TimeEntry[]>([])
   const [ready, setReady] = useState(false)
   const [theme, setThemeState] = useState<Theme>(readStoredTheme)
 
@@ -139,6 +193,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
       setColumns(nextColumns)
       setTasks(loaded.tasks)
+      setTimeEntries(loaded.timeEntries)
       setReady(true)
     }
 
@@ -250,6 +305,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         description: draft.description,
         columnId: draft.columnId,
         priority: draft.priority,
+        startAt: draft.startAt,
         deadline: draft.deadline,
         completed: draft.completed,
         order: draft.order,
@@ -301,10 +357,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      await store.removeTasks([...ids])
+      const entryIds = timeEntries
+        .filter((entry) => ids.has(entry.taskId))
+        .map((entry) => entry.id)
+
+      await Promise.all([store.removeTasks([...ids]), store.removeTimeEntries(entryIds)])
       setTasks((current) => current.filter((task) => !ids.has(task.id)))
+      setTimeEntries((current) => current.filter((entry) => !entryIds.includes(entry.id)))
     },
-    [tasks],
+    [tasks, timeEntries],
   )
 
   const toggleTask = useCallback(
@@ -320,12 +381,44 @@ export function DataProvider({ children }: { children: ReactNode }) {
     [tasks, patchTask],
   )
 
+  const addTimeEntry = useCallback(
+    async (draft: TimeEntryDraft) => {
+      const minutes = Math.round(draft.minutes)
+
+      if (minutes <= 0) {
+        return
+      }
+
+      const entry: TimeEntry = {
+        id: store.newId(),
+        taskId: draft.taskId,
+        date: DATE_PATTERN.test(draft.date) ? draft.date : todayDate(),
+        minutes: Math.min(1440, minutes),
+        note: draft.note.trim(),
+        createdAt: new Date().toISOString(),
+      }
+
+      await store.putTimeEntry(entry)
+      setTimeEntries((current) => [entry, ...current])
+    },
+    [],
+  )
+
+  const deleteTimeEntry = useCallback(
+    async (id: string) => {
+      await store.removeTimeEntries([id])
+      setTimeEntries((current) => current.filter((entry) => entry.id !== id))
+    },
+    [],
+  )
+
   const importData = useCallback(async (payload: ExportPayload) => {
     const normalized = normalizeImport(payload)
 
     await store.replaceAll({ ...payload, ...normalized })
     setColumns(normalized.columns)
     setTasks(normalized.tasks)
+    setTimeEntries(normalized.timeEntries)
   }, [])
 
   const resetData = useCallback(async () => {
@@ -335,12 +428,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
     await Promise.all(nextColumns.map((column) => store.putColumn(column)))
     setColumns(nextColumns)
     setTasks([])
+    setTimeEntries([])
   }, [])
 
   const value = useMemo<DataValue>(
     () => ({
       columns,
       tasks,
+      timeEntries,
       ready,
       theme,
       setTheme,
@@ -352,12 +447,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
       patchTask,
       deleteTask,
       toggleTask,
+      addTimeEntry,
+      deleteTimeEntry,
       importData,
       resetData,
     }),
     [
       columns,
       tasks,
+      timeEntries,
       ready,
       theme,
       setTheme,
@@ -369,6 +467,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
       patchTask,
       deleteTask,
       toggleTask,
+      addTimeEntry,
+      deleteTimeEntry,
       importData,
       resetData,
     ],

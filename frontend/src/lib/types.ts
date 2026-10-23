@@ -14,6 +14,7 @@ export interface Task {
   description: string
   columnId: string
   priority: Priority
+  startAt: string | null
   deadline: string | null
   completed: boolean
   order: number
@@ -21,14 +22,24 @@ export interface Task {
   updatedAt: string
 }
 
+export interface TimeEntry {
+  id: string
+  taskId: string
+  date: string
+  minutes: number
+  note: string
+  createdAt: string
+}
+
 export type Theme = 'light' | 'dark'
 
 export interface ExportPayload {
   app: 'taskflow'
-  version: 1
+  version: 2
   exportedAt: string
   columns: Column[]
   tasks: Task[]
+  timeEntries: TimeEntry[]
 }
 
 export interface TaskDraft {
@@ -36,10 +47,18 @@ export interface TaskDraft {
   description: string
   columnId: string
   priority: Priority
+  startAt: string | null
   deadline: string | null
   parentId: string | null
   completed: boolean
   order: number
+}
+
+export interface TimeEntryDraft {
+  taskId: string
+  date: string
+  minutes: number
+  note: string
 }
 
 export const PRIORITIES: { value: Priority; label: string }[] = [

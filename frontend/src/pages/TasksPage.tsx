@@ -3,9 +3,11 @@ import { useData } from '../lib/data'
 import type { Priority, Task } from '../lib/types'
 import { PRIORITY_LABELS, PRIORITIES } from '../lib/types'
 import {
+  branchMinutes,
   formatDateTime,
   isOverdue,
   matchesDue,
+  minutesLabel,
   priorityStyles,
   progressOf,
   sortTasks,
@@ -14,7 +16,7 @@ import {
 import { TaskModal } from '../components/TaskModal'
 
 export function TasksPage() {
-  const { columns, tasks, ready, deleteTask, toggleTask } = useData()
+  const { columns, tasks, timeEntries, ready, deleteTask, toggleTask } = useData()
   const [query, setQuery] = useState('')
   const [columnFilter, setColumnFilter] = useState('all')
   const [priorityFilter, setPriorityFilter] = useState<'all' | Priority>('all')
@@ -47,6 +49,16 @@ export function TasksPage() {
 
     return map
   }, [tasks])
+
+  const minutesByTask = useMemo(() => {
+    const map = new Map<string, number>()
+
+    for (const entry of timeEntries) {
+      map.set(entry.taskId, (map.get(entry.taskId) ?? 0) + entry.minutes)
+    }
+
+    return map
+  }, [timeEntries])
 
   const roots = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase()
@@ -172,6 +184,7 @@ export function TasksPage() {
               <th className="px-3 py-2 font-medium">Колонка</th>
               <th className="px-3 py-2 font-medium">Приоритет</th>
               <th className="px-3 py-2 font-medium">Дедлайн</th>
+              <th className="px-3 py-2 font-medium">Время</th>
               <th className="px-3 py-2 font-medium">Прогресс</th>
               <th className="px-3 py-2 font-medium"></th>
             </tr>
@@ -190,6 +203,8 @@ export function TasksPage() {
                   progress={progress}
                   columnTitle={columnTitles.get(task.columnId) ?? '—'}
                   done={done}
+                  minutes={branchMinutes(task, tasks, timeEntries)}
+                  minutesByTask={minutesByTask}
                   onOpen={() => setModal(task.id)}
                   onToggle={() => void toggleTask(task.id)}
                   onOpenSubtask={(id) => setModal(id)}
@@ -211,7 +226,7 @@ export function TasksPage() {
 
             {roots.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-3 py-8 text-center text-sm text-slate-500 dark:text-slate-400">
+                <td colSpan={7} className="px-3 py-8 text-center text-sm text-slate-500 dark:text-slate-400">
                   Задач не найдено.
                 </td>
               </tr>
@@ -243,6 +258,8 @@ interface TaskRowsProps {
   progress: { done: number; total: number; percent: number }
   columnTitle: string
   done: boolean
+  minutes: number
+  minutesByTask: Map<string, number>
   onOpen: () => void
   onToggle: () => void
   onOpenSubtask: (id: string) => void
@@ -256,6 +273,8 @@ function TaskRows({
   progress,
   columnTitle,
   done,
+  minutes,
+  minutesByTask,
   onOpen,
   onToggle,
   onOpenSubtask,
@@ -317,6 +336,10 @@ function TaskRows({
           >
             {formatDateTime(task.deadline)}
           </span>
+        </td>
+
+        <td className="px-3 py-2 text-slate-600 dark:text-slate-300">
+          {minutes > 0 ? minutesLabel(minutes) : '—'}
         </td>
 
         <td className="px-3 py-2">
@@ -388,6 +411,11 @@ function TaskRows({
           </td>
           <td className="px-3 py-2 text-xs text-slate-600 dark:text-slate-300">
             {formatDateTime(subtask.deadline)}
+          </td>
+          <td className="px-3 py-2 text-xs text-slate-600 dark:text-slate-300">
+            {(minutesByTask.get(subtask.id) ?? 0) > 0
+              ? minutesLabel(minutesByTask.get(subtask.id) ?? 0)
+              : '—'}
           </td>
           <td className="px-3 py-2 text-xs text-slate-400 dark:text-slate-500">—</td>
           <td className="px-3 py-2 text-right">

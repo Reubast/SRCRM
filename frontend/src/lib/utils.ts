@@ -3,6 +3,8 @@ import {
   endOfDay,
   format,
   isPast,
+  isThisMonth,
+  isThisWeek,
   isToday,
   isTomorrow,
   isWithinInterval,
@@ -10,7 +12,7 @@ import {
   startOfDay,
 } from 'date-fns'
 import { ru } from 'date-fns/locale'
-import type { Column, Priority, Task } from './types'
+import type { Column, Priority, Task, TimeEntry } from './types'
 
 export type DueFilter = 'all' | 'overdue' | 'today' | 'week' | 'none'
 
@@ -172,4 +174,58 @@ export function sortTasks(a: Task, b: Task, mode: 'manual' | 'deadline' | 'prior
   }
 
   return a.order - b.order
+}
+
+export type TimePeriod = 'today' | 'week' | 'month' | 'all'
+
+export function minutesLabel(total: number): string {
+  const safe = Math.max(0, Math.round(total))
+  const hours = Math.floor(safe / 60)
+  const minutes = safe % 60
+
+  if (hours > 0 && minutes > 0) {
+    return `${hours} ч ${minutes} мин`
+  }
+
+  if (hours > 0) {
+    return `${hours} ч`
+  }
+
+  return `${minutes} мин`
+}
+
+export function entryMinutes(entries: TimeEntry[]): number {
+  return entries.reduce((total, entry) => total + entry.minutes, 0)
+}
+
+export function matchesPeriod(date: string, period: TimePeriod): boolean {
+  if (period === 'all') {
+    return true
+  }
+
+  const parsed = parseISO(date)
+
+  if (period === 'today') {
+    return isToday(parsed)
+  }
+
+  if (period === 'week') {
+    return isThisWeek(parsed, { weekStartsOn: 1 })
+  }
+
+  return isThisMonth(parsed)
+}
+
+export function branchMinutes(task: Task, tasks: Task[], entries: TimeEntry[]): number {
+  const ids = new Set<string>([task.id])
+
+  for (const item of tasks) {
+    if (item.parentId === task.id) {
+      ids.add(item.id)
+    }
+  }
+
+  return entries
+    .filter((entry) => ids.has(entry.taskId))
+    .reduce((total, entry) => total + entry.minutes, 0)
 }

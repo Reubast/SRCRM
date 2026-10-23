@@ -8,17 +8,18 @@ type Status = { kind: 'ok' | 'error'; text: string } | null
 
 export function SettingsPage() {
   const { user, logout } = useAuth()
-  const { columns, tasks, theme, setTheme, importData, resetData } = useData()
+  const { columns, tasks, timeEntries, theme, setTheme, importData, resetData } = useData()
   const fileInput = useRef<HTMLInputElement>(null)
   const [status, setStatus] = useState<Status>(null)
 
   function handleExport() {
     const payload: ExportPayload = {
       app: 'taskflow',
-      version: 1,
+      version: 2,
       exportedAt: new Date().toISOString(),
       columns,
       tasks,
+      timeEntries,
     }
 
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
@@ -53,7 +54,7 @@ export function SettingsPage() {
 
       if (
         !window.confirm(
-          'Импорт заменит все текущие задачи и колонки в этом браузере. Продолжить?',
+          'Импорт заменит все текущие задачи, колонки и трудозатраты в этом браузере. Продолжить?',
         )
       ) {
         return
@@ -147,7 +148,7 @@ export function SettingsPage() {
           Данные
         </h2>
         <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
-          Колонок: {columns.length}, задач и подзадач: {tasks.length}.
+          Колонок: {columns.length}, задач и подзадач: {tasks.length}, записей времени: {timeEntries.length}.
         </p>
 
         <div className="mt-3 flex flex-wrap gap-2">

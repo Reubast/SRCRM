@@ -20,9 +20,11 @@ import { useData } from '../lib/data'
 import type { Column, Priority, Task } from '../lib/types'
 import { PRIORITY_LABELS, PRIORITIES } from '../lib/types'
 import {
+  branchMinutes,
   deadlineLabel,
   isOverdue,
   matchesDue,
+  minutesLabel,
   priorityBars,
   priorityStyles,
   progressOf,
@@ -455,12 +457,13 @@ interface TaskCardProps {
 }
 
 function TaskCard({ task, allTasks, draggable, onClick }: TaskCardProps) {
-  const { columns } = useData()
+  const { columns, timeEntries } = useData()
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } =
     useSortable({ id: task.id, disabled: !draggable })
   const progress = progressOf(task, allTasks, columns)
   const subtasks = allTasks.filter((item) => item.parentId === task.id)
   const overdue = isOverdue(task)
+  const spent = branchMinutes(task, allTasks, timeEntries)
   const doneColumn = columns.find((column) => column.id === task.columnId)?.isDone ?? false
 
   return (
@@ -528,6 +531,15 @@ function TaskCard({ task, allTasks, draggable, onClick }: TaskCardProps) {
           {subtasks.length > 0 && (
             <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
               {progress.done}/{progress.total}
+            </span>
+          )}
+
+          {spent > 0 && (
+            <span
+              className="rounded-md bg-indigo-50 px-1.5 py-0.5 text-[11px] font-medium text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300"
+              title="Суммарные трудозатраты по задаче и подзадачам"
+            >
+              {minutesLabel(spent)}
             </span>
           )}
         </div>

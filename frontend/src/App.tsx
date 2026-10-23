@@ -6,6 +6,7 @@ import { KanbanPage } from './pages/KanbanPage'
 import { LoginPage } from './pages/LoginPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { TasksPage } from './pages/TasksPage'
+import { TimePage } from './pages/TimePage'
 
 const CalendarPage = lazy(() =>
   import('./pages/CalendarPage').then((module) => ({ default: module.CalendarPage })),
@@ -50,6 +51,7 @@ export function App() {
           }
         />
         <Route path="/tasks" element={<TasksPage />} />
+        <Route path="/time" element={<TimePage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>
 

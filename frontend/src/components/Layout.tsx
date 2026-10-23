@@ -7,6 +7,7 @@ const links = [
   { to: '/kanban', label: 'Канбан' },
   { to: '/calendar', label: 'Календарь' },
   { to: '/tasks', label: 'Все задачи' },
+  { to: '/time', label: 'Время' },
   { to: '/settings', label: 'Настройки' },
 ]
 
