@@ -25,9 +25,11 @@ import {
   isOverdue,
   matchesDue,
   minutesLabel,
-  priorityBars,
+  plainDescription,
   priorityStyles,
+  progressBarClasses,
   progressOf,
+  progressTone,
   sortTasks,
   type DueFilter,
 } from '../lib/utils'
@@ -56,13 +58,18 @@ export function KanbanPage() {
   const sortedColumns = useMemo(() => [...columns].sort((a, b) => a.order - b.order), [columns])
 
   const topTasks = useMemo(() => tasks.filter((task) => !task.parentId), [tasks])
+  const doneColumnIds = useMemo(
+    () => new Set(columns.filter((column) => column.isDone).map((column) => column.id)),
+    [columns],
+  )
   const filtered = useMemo(
     () =>
       topTasks.filter(
         (task) =>
-          (priority === 'all' || task.priority === priority) && matchesDue(task.deadline, due),
+          (priority === 'all' || task.priority === priority) &&
+          matchesDue(task.deadline, due, doneColumnIds.has(task.columnId)),
       ),
-    [topTasks, priority, due],
+    [topTasks, priority, due, doneColumnIds],
   )
 
   const visibleByColumn = useMemo(() => {
@@ -462,16 +469,25 @@ function TaskCard({ task, allTasks, draggable, onClick }: TaskCardProps) {
     useSortable({ id: task.id, disabled: !draggable })
   const progress = progressOf(task, allTasks, columns)
   const subtasks = allTasks.filter((item) => item.parentId === task.id)
-  const overdue = isOverdue(task)
-  const spent = branchMinutes(task, allTasks, timeEntries)
   const doneColumn = columns.find((column) => column.id === task.columnId)?.isDone ?? false
+  const overdue = isOverdue(task, doneColumn)
+  const spent = branchMinutes(task, allTasks, timeEntries)
+  const barClass = progressBarClasses[progressTone(progress.percent)]
 
   return (
     <div
       ref={setNodeRef}
-      style={{ transform: CSS.Transform.toString(transform), transition }}
+      {...attributes}
+      {...listeners}
+      aria-label="Перетащить задачу"
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        ...(task.color ? { borderTopWidth: 4, borderTopColor: task.color } : {}),
+      }}
       className={[
         'group flex items-start gap-1 rounded-xl border bg-white p-2 shadow-sm transition dark:bg-slate-900',
+        draggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-default',
         isDragging ? 'opacity-60 shadow-lg' : 'hover:shadow-md',
         doneColumn ? 'border-emerald-200 dark:border-emerald-800/60' : 'border-slate-200 dark:border-slate-800',
       ].join(' ')}
@@ -479,8 +495,6 @@ function TaskCard({ task, allTasks, draggable, onClick }: TaskCardProps) {
       <button
         type="button"
         ref={setActivatorNodeRef}
-        {...attributes}
-        {...listeners}
         disabled={!draggable}
         className="mt-1 cursor-grab rounded px-0.5 text-slate-300 opacity-60 transition hover:text-slate-500 group-hover:opacity-100 disabled:cursor-default disabled:opacity-20 dark:text-slate-600 dark:hover:text-slate-300"
         title={draggable ? 'Перетащить' : 'Перетаскивание недоступно при фильтрах и сортировке'}
@@ -510,7 +524,9 @@ function TaskCard({ task, allTasks, draggable, onClick }: TaskCardProps) {
         </div>
 
         {task.description && (
-          <p className="mt-1 line-clamp-2 text-xs text-slate-500 dark:text-slate-400">{task.description}</p>
+          <p className="mt-1 line-clamp-2 text-xs text-slate-500 dark:text-slate-400">
+            {plainDescription(task.description)}
+          </p>
         )}
 
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -547,7 +563,7 @@ function TaskCard({ task, allTasks, draggable, onClick }: TaskCardProps) {
         {subtasks.length > 0 && (
           <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
             <div
-              className={`h-full rounded-full ${priorityBars[task.priority]}`}
+              className={`h-full rounded-full ${barClass}`}
               style={{ width: `${progress.percent}%` }}
             />
           </div>

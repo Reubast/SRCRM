@@ -48,8 +48,8 @@ export function formatDateTime(iso: string | null): string {
   return format(parseISO(iso), 'd MMM yyyy, HH:mm', { locale: ru })
 }
 
-export function isOverdue(task: Task): boolean {
-  if (!task.deadline || task.completed) {
+export function isOverdue(task: Task, inDoneColumn: boolean): boolean {
+  if (!task.deadline || task.completed || inDoneColumn) {
     return false
   }
 
@@ -84,7 +84,7 @@ export function atMidnight(date: Date): string {
   return startOfDay(date).toISOString()
 }
 
-export function matchesDue(iso: string | null, filter: DueFilter): boolean {
+export function matchesDue(iso: string | null, filter: DueFilter, inDoneColumn = false): boolean {
   if (filter === 'all') {
     return true
   }
@@ -100,7 +100,7 @@ export function matchesDue(iso: string | null, filter: DueFilter): boolean {
   const date = parseISO(iso)
 
   if (filter === 'overdue') {
-    return isPast(date) && !isToday(date)
+    return !inDoneColumn && isPast(date) && !isToday(date)
   }
 
   if (filter === 'today') {
@@ -154,6 +154,70 @@ export const priorityEventColors: Record<Priority, string> = {
   high: '#e11d48',
   medium: '#d97706',
   low: '#059669',
+}
+
+export type ProgressTone = 'gray' | 'amber' | 'green'
+
+// Пороги прогресса: 0–33% серый, 34–99% янтарный, 100% зелёный.
+export function progressTone(percent: number): ProgressTone {
+  if (percent >= 100) {
+    return 'green'
+  }
+
+  return percent > 33 ? 'amber' : 'gray'
+}
+
+export const progressBarClasses: Record<ProgressTone, string> = {
+  gray: 'bg-slate-400',
+  amber: 'bg-amber-500',
+  green: 'bg-emerald-500',
+}
+
+export const progressHex: Record<ProgressTone, string> = {
+  gray: '#94a3b8',
+  amber: '#d97706',
+  green: '#059669',
+}
+
+// Картинки хранятся прямо в описании: ![](data:image/...;base64,...)
+const IMAGE_SOURCE = 'data:image\\/(?:webp|jpeg|png);base64,[A-Za-z0-9+/=]+'
+export const IMAGE_TOKEN_PATTERN = new RegExp(`!\\[\\]\\((${IMAGE_SOURCE})\\)`, 'g')
+export const MAX_IMAGES_PER_TASK = 5
+
+export type DescriptionPart = { kind: 'text'; value: string } | { kind: 'image'; src: string }
+
+export function splitDescription(text: string): DescriptionPart[] {
+  const parts: DescriptionPart[] = []
+  let last = 0
+
+  for (const match of text.matchAll(IMAGE_TOKEN_PATTERN)) {
+    const index = match.index ?? 0
+
+    if (index > last) {
+      parts.push({ kind: 'text', value: text.slice(last, index) })
+    }
+
+    parts.push({ kind: 'image', src: match[1] })
+    last = index + match[0].length
+  }
+
+  if (last < text.length) {
+    parts.push({ kind: 'text', value: text.slice(last) })
+  }
+
+  return parts
+}
+
+export function countImages(text: string): number {
+  return Array.from(text.matchAll(IMAGE_TOKEN_PATTERN)).length
+}
+
+export function plainDescription(text: string): string {
+  return text.replace(IMAGE_TOKEN_PATTERN, ' [фото] ').replace(/\s+/g, ' ').trim()
+}
+
+export function imageToken(src: string): string {
+  return `![](${src})`
 }
 
 export function sortTasks(a: Task, b: Task, mode: 'manual' | 'deadline' | 'priority' | 'created'): number {

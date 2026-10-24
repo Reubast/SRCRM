@@ -1,12 +1,43 @@
-import { useEffect, useMemo, useState, type FormEvent, type MouseEvent } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type ClipboardEvent,
+  type DragEvent,
+  type FormEvent,
+  type MouseEvent,
+} from 'react'
+import {
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  SortableContext,
+  arrayMove,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import { useData } from '../lib/data'
-import type { Priority, Task } from '../lib/types'
+import { compressImage } from '../lib/images'
+import { TASK_COLORS, type Priority, type Task } from '../lib/types'
 import { PRIORITIES } from '../lib/types'
 import {
+  MAX_IMAGES_PER_TASK,
+  countImages,
   formatDateTime,
   fromDateTimeInput,
+  IMAGE_TOKEN_PATTERN,
+  imageToken,
   minutesLabel,
   progressOf,
+  splitDescription,
   toDateTimeInput,
 } from '../lib/utils'
 
@@ -68,11 +99,18 @@ export function TaskModal({
     task?.columnId ?? defaultColumnId ?? sortedColumns[0]?.id ?? '',
   )
   const [priority, setPriority] = useState<Priority>(task?.priority ?? 'medium')
+  const [color, setColor] = useState<string | null>(task?.color ?? null)
   const [startAt, setStartAt] = useState(toDateTimeInput(task?.startAt ?? defaultStartAt))
   const [deadline, setDeadline] = useState(toDateTimeInput(task?.deadline ?? defaultDeadline))
   const [subtaskTitle, setSubtaskTitle] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [imageBusy, setImageBusy] = useState(false)
+  const [imageError, setImageError] = useState<string | null>(null)
+  const [dragOver, setDragOver] = useState(false)
+  const descriptionRef = useRef<HTMLTextAreaElement>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const subtaskSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
 
   const [entryDate, setEntryDate] = useState(todayValue)
   const [entryMinutes, setEntryMinutes] = useState('30')
@@ -146,6 +184,7 @@ export function TaskModal({
           parentId: task?.parentId ?? null,
           completed: task?.completed ?? false,
           order: task?.order ?? defaultOrder,
+          color,
         },
         task?.id,
       )
@@ -232,6 +271,106 @@ export function TaskModal({
     event.stopPropagation()
   }
 
+  async function insertImages(files: File[]) {
+    const room = MAX_IMAGES_PER_TASK - countImages(description)
+    const images = files.filter((file) => file.type.startsWith('image/'))
+
+    if (images.length === 0) {
+      return
+    }
+
+    if (room <= 0) {
+      setImageError(`Не больше ${MAX_IMAGES_PER_TASK} картинок на задачу.`)
+      return
+    }
+
+    const selected = images.slice(0, room)
+
+    setImageBusy(true)
+    setImageError(
+      images.length > selected.length
+        ? `Добавлено ${selected.length}: максимум ${MAX_IMAGES_PER_TASK} картинок на задачу.`
+        : null,
+    )
+
+    try {
+      const tokens: string[] = []
+
+      for (const file of selected) {
+        tokens.push(imageToken(await compressImage(file)))
+      }
+
+      setDescription((current) => {
+        const separator = current && !current.endsWith('\n') ? '\n' : ''
+
+        return `${current}${separator}${tokens.join('\n')}`
+      })
+    } catch (caught) {
+      setImageError(caught instanceof Error ? caught.message : 'Не удалось добавить картинку.')
+    } finally {
+      setImageBusy(false)
+    }
+  }
+
+  function removeImage(index: number) {
+    let seen = -1
+
+    setDescription((current) =>
+      current.replace(IMAGE_TOKEN_PATTERN, (match) => {
+        seen += 1
+        return seen === index ? '' : match
+      }),
+    )
+  }
+
+  function handlePaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+    const files = Array.from(event.clipboardData.items)
+      .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => file !== null)
+
+    if (files.length > 0) {
+      event.preventDefault()
+      void insertImages(files)
+    }
+  }
+
+  function handleDrop(event: DragEvent<HTMLTextAreaElement>) {
+    event.preventDefault()
+    setDragOver(false)
+    void insertImages(Array.from(event.dataTransfer.files))
+  }
+
+  function handleFilePick(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? [])
+
+    event.target.value = ''
+    void insertImages(files)
+  }
+
+  async function handleSubtaskDragEnd(event: DragEndEvent) {
+    const { active, over } = event
+
+    if (!over || active.id === over.id) {
+      return
+    }
+
+    const from = subtasks.findIndex((item) => item.id === active.id)
+    const to = subtasks.findIndex((item) => item.id === over.id)
+
+    if (from < 0 || to < 0) {
+      return
+    }
+
+    const reordered = arrayMove(subtasks, from, to)
+
+    await Promise.all(
+      reordered.map((item, index) =>
+        item.order !== index + 1 ? patchTask(item.id, { order: index + 1 }) : null,
+      ),
+    )
+  }
+
   if (sortedColumns.length === 0) {
     return null
   }
@@ -287,15 +426,73 @@ export function TaskModal({
             />
           </label>
 
-          <label className={labelClass}>
-            Описание
+          <div className={labelClass}>
+            <div className="flex items-center justify-between gap-2">
+              <span>Описание</span>
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                disabled={imageBusy}
+                className="rounded px-2 py-0.5 text-[11px] font-semibold normal-case tracking-normal text-indigo-600 transition hover:bg-indigo-50 disabled:opacity-50 dark:text-indigo-400 dark:hover:bg-indigo-500/10"
+              >
+                {imageBusy ? 'Обработка…' : '+ Фото'}
+              </button>
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={handleFilePick}
+              />
+            </div>
             <textarea
-              className={`${fieldClass} min-h-[90px] resize-y`}
+              ref={descriptionRef}
+              className={`${fieldClass} min-h-[90px] resize-y ${dragOver ? 'border-indigo-500 ring-2 ring-indigo-500/30' : ''}`}
               value={description}
               onChange={(event) => setDescription(event.target.value)}
-              placeholder="Детали, ссылки, критерии готовности"
+              onPaste={handlePaste}
+              onDragOver={(event) => {
+                event.preventDefault()
+                setDragOver(true)
+              }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={handleDrop}
+              placeholder="Детали, ссылки, критерии готовности. Картинки можно вставить из буфера или перетащить сюда."
             />
-          </label>
+            {imageError && <p className="text-xs normal-case text-rose-600 dark:text-rose-400">{imageError}</p>}
+            <DescriptionImages description={description} onRemove={removeImage} />
+          </div>
+
+          <div className={labelClass}>
+            Цвет метки
+            <div className="flex flex-wrap items-center gap-2 normal-case tracking-normal">
+              <button
+                type="button"
+                onClick={() => setColor(null)}
+                className={`rounded-full border px-2 py-0.5 text-xs transition ${
+                  color === null
+                    ? 'border-slate-900 text-slate-900 dark:border-white dark:text-white'
+                    : 'border-slate-300 text-slate-500 dark:border-slate-700 dark:text-slate-400'
+                }`}
+              >
+                Без цвета
+              </button>
+              {TASK_COLORS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setColor(option.value)}
+                  title={option.label}
+                  aria-label={option.label}
+                  className={`h-6 w-6 rounded-full border-2 transition ${
+                    color === option.value ? 'border-slate-900 scale-110 dark:border-white' : 'border-transparent'
+                  }`}
+                  style={{ background: option.value }}
+                />
+              ))}
+            </div>
+          </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
             <label className={labelClass}>
@@ -400,7 +597,7 @@ export function TaskModal({
                     type="number"
                     min={1}
                     max={1440}
-                    step={5}
+                    step={1}
                     value={entryMinutes}
                     onChange={(event) => setEntryMinutes(event.target.value)}
                     className="w-20 rounded border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
@@ -444,17 +641,28 @@ export function TaskModal({
                 )}
               </div>
 
-              <div className="mt-2 flex flex-col gap-2">
-                {subtasks.map((subtask) => (
-                  <SubtaskRow
-                    key={subtask.id}
-                    task={subtask}
-                    onPatch={patchTask}
-                    onToggle={toggleTask}
-                    onDelete={deleteTask}
-                  />
-                ))}
-              </div>
+              <DndContext
+                sensors={subtaskSensors}
+                collisionDetection={closestCenter}
+                onDragEnd={handleSubtaskDragEnd}
+              >
+                <SortableContext
+                  items={subtasks.map((subtask) => subtask.id)}
+                  strategy={verticalListSortingStrategy}
+                >
+                  <div className="mt-2 flex flex-col gap-2">
+                    {subtasks.map((subtask) => (
+                      <SubtaskRow
+                        key={subtask.id}
+                        task={subtask}
+                        onPatch={patchTask}
+                        onToggle={toggleTask}
+                        onDelete={deleteTask}
+                      />
+                    ))}
+                  </div>
+                </SortableContext>
+              </DndContext>
 
               <div className="mt-3 flex gap-2">
                 <input
@@ -545,8 +753,40 @@ interface SubtaskRowProps {
 }
 
 function SubtaskRow({ task, onPatch, onToggle, onDelete }: SubtaskRowProps) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } =
+    useSortable({ id: task.id })
+  const deadlineRef = useRef<HTMLInputElement>(null)
+
+  // Поле не контролируемое: при частичном вводе даты Chrome отдаёт пустое значение,
+  // и контролируемый input сбрасывал бы введённые цифры. Значение синхронизируется только на blur.
+  function commitDeadline(value: string) {
+    const next = fromDateTimeInput(value)
+
+    if (next !== task.deadline) {
+      void onPatch(task.id, { deadline: next })
+    }
+  }
+
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 px-2 py-1.5 dark:bg-slate-800/60">
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={`flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 px-2 py-1.5 dark:bg-slate-800/60 ${
+        isDragging ? 'opacity-60 shadow-lg' : ''
+      }`}
+    >
+      <button
+        type="button"
+        ref={setActivatorNodeRef}
+        {...attributes}
+        {...listeners}
+        className="cursor-grab rounded px-0.5 text-slate-300 transition hover:text-slate-500 active:cursor-grabbing dark:text-slate-600 dark:hover:text-slate-300"
+        title="Перетащить подзадачу"
+        aria-label="Перетащить подзадачу"
+      >
+        ⋮⋮
+      </button>
+
       <input
         type="checkbox"
         checked={task.completed}
@@ -567,9 +807,22 @@ function SubtaskRow({ task, onPatch, onToggle, onDelete }: SubtaskRowProps) {
       />
 
       <input
+        ref={deadlineRef}
         type="datetime-local"
-        value={toDateTimeInput(task.deadline)}
-        onChange={(event) => void onPatch(task.id, { deadline: fromDateTimeInput(event.target.value) })}
+        defaultValue={toDateTimeInput(task.deadline)}
+        onChange={(event) => {
+          // Частичный ввод даёт пустое значение: сохраняем только полностью введённую дату.
+          if (event.target.value) {
+            commitDeadline(event.target.value)
+          }
+        }}
+        onBlur={(event) => {
+          if (!event.target.value) {
+            commitDeadline('')
+          } else {
+            commitDeadline(event.target.value)
+          }
+        }}
         className="rounded border border-slate-200 bg-white px-1.5 py-1 text-xs text-slate-600 outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
         title={formatDateTime(task.deadline)}
       />
@@ -582,6 +835,47 @@ function SubtaskRow({ task, onPatch, onToggle, onDelete }: SubtaskRowProps) {
       >
         Удалить
       </button>
+    </div>
+  )
+}
+
+interface DescriptionImagesProps {
+  description: string
+  onRemove: (index: number) => void
+}
+
+function DescriptionImages({ description, onRemove }: DescriptionImagesProps) {
+  const images = useMemo(
+    () =>
+      splitDescription(description).filter(
+        (part): part is { kind: 'image'; src: string } => part.kind === 'image',
+      ),
+    [description],
+  )
+
+  if (images.length === 0) {
+    return null
+  }
+
+  return (
+    <div className="mt-1 flex flex-wrap gap-2 normal-case tracking-normal">
+      {images.map((image, index) => (
+        <div key={index} className="relative">
+          <img
+            src={image.src}
+            alt={`Картинка ${index + 1}`}
+            className="h-24 w-24 rounded-lg border border-slate-200 object-cover dark:border-slate-700"
+          />
+          <button
+            type="button"
+            onClick={() => onRemove(index)}
+            className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-slate-900 text-xs text-white shadow hover:bg-rose-600"
+            aria-label="Удалить картинку"
+          >
+            ×
+          </button>
+        </div>
+      ))}
     </div>
   )
 }

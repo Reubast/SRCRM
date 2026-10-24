@@ -8,15 +8,16 @@ import {
   type ReactNode,
 } from 'react'
 import * as store from './db'
-import type {
-  Column,
-  ExportPayload,
-  Priority,
-  Task,
-  TaskDraft,
-  Theme,
-  TimeEntry,
-  TimeEntryDraft,
+import {
+  TASK_COLORS,
+  type Column,
+  type ExportPayload,
+  type Priority,
+  type Task,
+  type TaskDraft,
+  type Theme,
+  type TimeEntry,
+  type TimeEntryDraft,
 } from './types'
 
 interface DataValue {
@@ -102,6 +103,7 @@ function normalizeImport(payload: ExportPayload): {
         deadline: typeof item.deadline === 'string' ? item.deadline : null,
         completed: item.completed === true,
         order: typeof item.order === 'number' ? item.order : 0,
+        color: TASK_COLORS.some((option) => option.value === item.color) ? (item.color as string) : null,
         createdAt: typeof item.createdAt === 'string' ? item.createdAt : now,
         updatedAt: typeof item.updatedAt === 'string' ? item.updatedAt : now,
       }
@@ -313,6 +315,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         deadline: draft.deadline,
         completed: draft.completed,
         order: draft.order,
+        color: draft.color === undefined ? (existing?.color ?? null) : draft.color,
         createdAt: existing?.createdAt ?? now,
         updatedAt: now,
       }

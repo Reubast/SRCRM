@@ -15,10 +15,18 @@ import ruLocale from '@fullcalendar/react/locales/ru'
 import '@fullcalendar/react/skeleton.css'
 import '@fullcalendar/react/themes/classic/theme.css'
 import '@fullcalendar/react/themes/classic/palette.css'
-import { addDays } from 'date-fns'
+import { addDays, format } from 'date-fns'
+import { ru } from 'date-fns/locale'
 import { useData } from '../lib/data'
 import { TaskModal } from '../components/TaskModal'
-import { atMidnight, isAllDay, priorityEventColors } from '../lib/utils'
+import {
+  atMidnight,
+  isAllDay,
+  priorityEventColors,
+  progressHex,
+  progressOf,
+  progressTone,
+} from '../lib/utils'
 
 type ModalState =
   | { kind: 'new'; startAt: string | null; deadline: string | null }
@@ -26,7 +34,7 @@ type ModalState =
   | null
 
 export function CalendarPage() {
-  const { columns, tasks, ready, patchTask } = useData()
+  const { columns, tasks, ready, patchTask, theme } = useData()
   const [modal, setModal] = useState<ModalState>(null)
 
   const sortedColumns = useMemo(() => [...columns].sort((a, b) => a.order - b.order), [columns])
@@ -45,7 +53,8 @@ export function CalendarPage() {
           const allDay = isAllDay(start) && isAllDay(deadline)
           const hasRange = Boolean(task.startAt) && deadline !== start
           const done = task.completed || doneColumnIds.has(task.columnId)
-          const color = done ? '#94a3b8' : priorityEventColors[task.priority]
+          const percent = progressOf(task, tasks, columns).percent
+          const dark = theme === 'dark'
 
           return {
             id: task.id,
@@ -53,12 +62,17 @@ export function CalendarPage() {
             start,
             end: hasRange ? deadline : undefined,
             allDay,
-            backgroundColor: color,
-            borderColor: color,
-            textColor: '#ffffff',
+            // Рамка события показывает прогресс, кружок в шапке — приоритет, полоска слева — цвет метки.
+            backgroundColor: dark ? '#1e293b' : '#ffffff',
+            textColor: done ? '#94a3b8' : dark ? '#e2e8f0' : '#0f172a',
+            extendedProps: {
+              priority: task.priority,
+              color: task.color,
+              frame: progressHex[progressTone(done ? 100 : percent)],
+            },
           }
         }),
-    [tasks, doneColumnIds],
+    [tasks, columns, doneColumnIds, theme],
   )
 
   function handleSelect(info: DateSelectInfo) {
@@ -175,17 +189,61 @@ export function CalendarPage() {
         </button>
       </div>
 
-      <div className="rounded-2xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+      <div className="tf-calendar rounded-2xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
         <FullCalendar
           plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin, classicThemePlugin]}
           initialView="dayGridMonth"
           locales={[ruLocale]}
           locale="ru"
           firstDay={1}
+          weekNumbers
           headerToolbar={{
             left: 'prev,next today',
             center: 'title',
             right: 'dayGridMonth,timeGridWeek,timeGridDay',
+          }}
+          dayCellClass={(arg) => {
+            const classes: string[] = []
+
+            if (arg.date.getDay() === 1) {
+              classes.push('tf-week-start')
+            }
+            if (arg.date.getDay() === 0 || arg.date.getDay() === 6) {
+              classes.push('tf-weekend')
+            }
+            if (arg.date.getDate() === 1) {
+              classes.push('tf-first-of-month')
+            }
+
+            return classes.join(' ')
+          }}
+          dayCellTopContent={(arg) =>
+            arg.date.getDate() === 1 ? format(arg.date, 'd MMM', { locale: ru }) : undefined
+          }
+          eventDidMount={(arg) => {
+            const frame = arg.event.extendedProps.frame as string | undefined
+
+            if (frame) {
+              arg.el.style.boxShadow = `inset 0 0 0 2px ${frame}`
+            }
+          }}
+          eventContent={(arg) => {
+            const priority = arg.event.extendedProps.priority as keyof typeof priorityEventColors
+            const color = arg.event.extendedProps.color as string | null
+
+            return (
+              <div
+                className="tf-event-body"
+                style={color ? { borderLeft: `4px solid ${color}` } : undefined}
+              >
+                <span
+                  className="tf-priority"
+                  style={{ background: priorityEventColors[priority] }}
+                  title="Приоритет"
+                />
+                <span className="tf-title">{arg.event.title}</span>
+              </div>
+            )
           }}
           events={events}
           editable

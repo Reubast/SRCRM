@@ -8,6 +8,7 @@ import {
   isOverdue,
   matchesDue,
   minutesLabel,
+  plainDescription,
   priorityStyles,
   progressOf,
   sortTasks,
@@ -25,6 +26,10 @@ export function TasksPage() {
   const [modal, setModal] = useState<string | 'new' | null>(null)
 
   const sortedColumns = useMemo(() => [...columns].sort((a, b) => a.order - b.order), [columns])
+  const doneColumnIds = useMemo(
+    () => new Set(columns.filter((column) => column.isDone).map((column) => column.id)),
+    [columns],
+  )
   const columnTitles = useMemo(
     () => new Map(columns.map((column) => [column.id, column.title])),
     [columns],
@@ -67,7 +72,7 @@ export function TasksPage() {
       .filter((task) => !task.parentId)
       .filter((task) => columnFilter === 'all' || task.columnId === columnFilter)
       .filter((task) => priorityFilter === 'all' || task.priority === priorityFilter)
-      .filter((task) => matchesDue(task.deadline, due))
+      .filter((task) => matchesDue(task.deadline, due, doneColumnIds.has(task.columnId)))
       .filter((task) => {
         if (!normalizedQuery) {
           return true
@@ -86,7 +91,7 @@ export function TasksPage() {
       })
 
     return filtered.sort((a, b) => sortTasks(a, b, sortMode))
-  }, [tasks, columnFilter, priorityFilter, due, query, sortMode, subtasksByParent])
+  }, [tasks, columnFilter, priorityFilter, due, query, sortMode, subtasksByParent, doneColumnIds])
 
   const total = tasks.filter((task) => !task.parentId).length
   const shown = roots.length
@@ -281,7 +286,7 @@ function TaskRows({
   onToggleSubtask,
   onDelete,
 }: TaskRowsProps) {
-  const overdue = isOverdue(task)
+  const overdue = isOverdue(task, done)
   const hasSubtasks = subtasks.length > 0
 
   return (
@@ -311,7 +316,7 @@ function TaskRows({
               </span>
               {task.description && (
                 <span className="mt-0.5 block line-clamp-1 text-xs text-slate-500 dark:text-slate-400">
-                  {task.description}
+                  {plainDescription(task.description)}
                 </span>
               )}
             </button>
