@@ -1,7 +1,9 @@
-import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
-import type { Column, ExportPayload, Task, Theme, TimeEntry } from './types'
+import { openDB, type DBSchema } from 'idb'
+import type { Column, Task, TimeEntry } from './types'
 
-interface TaskFlowDB extends DBSchema {
+// Старое локальное хранилище (до переноса данных на сервер). Только чтение,
+// для одноразового предложения перенести задачи в аккаунт.
+interface LegacyDB extends DBSchema {
   columns: {
     key: string
     value: Column
@@ -14,56 +16,15 @@ interface TaskFlowDB extends DBSchema {
     key: string
     value: TimeEntry
   }
-  settings: {
-    key: string
-    value: string
-  }
 }
 
 const DB_NAME = 'taskflow'
-const DB_VERSION = 2
+const READ_TIMEOUT_MS = 3000
 
-let dbPromise: Promise<IDBPDatabase<TaskFlowDB>> | null = null
-const blockedListeners = new Set<() => void>()
-
-export function onDbBlocked(listener: () => void): () => void {
-  blockedListeners.add(listener)
-
-  return () => {
-    blockedListeners.delete(listener)
-  }
-}
-
-function notifyBlocked() {
-  for (const listener of blockedListeners) {
-    listener()
-  }
-}
-
-function db(): Promise<IDBPDatabase<TaskFlowDB>> {
-  if (!dbPromise) {
-    dbPromise = openDB<TaskFlowDB>(DB_NAME, DB_VERSION, {
-      upgrade(database) {
-        if (!database.objectStoreNames.contains('columns')) {
-          database.createObjectStore('columns', { keyPath: 'id' })
-        }
-        if (!database.objectStoreNames.contains('tasks')) {
-          database.createObjectStore('tasks', { keyPath: 'id' })
-        }
-        if (!database.objectStoreNames.contains('timeEntries')) {
-          database.createObjectStore('timeEntries', { keyPath: 'id' })
-        }
-        if (!database.objectStoreNames.contains('settings')) {
-          database.createObjectStore('settings')
-        }
-      },
-      blocked() {
-        notifyBlocked()
-      },
-    })
-  }
-
-  return dbPromise
+export interface LegacySnapshot {
+  columns: Column[]
+  tasks: Task[]
+  timeEntries: TimeEntry[]
 }
 
 export function newId(): string {
@@ -74,98 +35,63 @@ export function newId(): string {
   return `id-${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
-export const defaultColumns = (): Column[] => [
-  { id: newId(), title: 'Бэклог', order: 0, isDone: false },
-  { id: newId(), title: 'В работе', order: 1, isDone: false },
-  { id: newId(), title: 'Выполнено', order: 2, isDone: true },
-]
+async function hasLegacyDatabase(): Promise<boolean> {
+  if (typeof indexedDB === 'undefined') {
+    return false
+  }
 
-export async function loadAll(): Promise<{
-  columns: Column[]
-  tasks: Task[]
-  timeEntries: TimeEntry[]
-}> {
-  const database = await db()
-  const [columns, tasks, timeEntries] = await Promise.all([
-    database.getAll('columns'),
-    database.getAll('tasks'),
-    database.getAll('timeEntries'),
-  ])
+  if (typeof indexedDB.databases !== 'function') {
+    return true
+  }
 
-  return {
-    columns: columns.sort((a, b) => a.order - b.order),
-    tasks: tasks
-      .map((task) => ({ ...task, startAt: task.startAt ?? null }))
-      .sort((a, b) => a.order - b.order),
-    timeEntries: timeEntries.sort((a, b) => b.date.localeCompare(a.date)),
+  const databases = await indexedDB.databases()
+
+  return databases.some((item) => item.name === DB_NAME)
+}
+
+async function readAll(): Promise<LegacySnapshot | null> {
+  // Открываем без указания версии: апгрейд схемы здесь не нужен и не может заблокироваться.
+  const database = await openDB<LegacyDB>(DB_NAME)
+
+  try {
+    if (!database.objectStoreNames.contains('tasks')) {
+      return null
+    }
+
+    const hasEntries = database.objectStoreNames.contains('timeEntries')
+    const [columns, tasks, timeEntries] = await Promise.all([
+      database.getAll('columns'),
+      database.getAll('tasks'),
+      hasEntries ? database.getAll('timeEntries') : Promise.resolve([]),
+    ])
+
+    return {
+      columns,
+      tasks: tasks.map((task) => ({ ...task, startAt: task.startAt ?? null })),
+      timeEntries,
+    }
+  } finally {
+    database.close()
   }
 }
 
-export async function putColumn(column: Column): Promise<void> {
-  const database = await db()
-  await database.put('columns', column)
-}
+/**
+ * Читает локальные данные старой версии. Возвращает null, если данных нет
+ * или чтение не завершилось за READ_TIMEOUT_MS (например, база занята другой вкладкой).
+ */
+export async function readLegacy(): Promise<LegacySnapshot | null> {
+  try {
+    const exists = await hasLegacyDatabase()
 
-export async function removeColumn(id: string): Promise<void> {
-  const database = await db()
-  await database.delete('columns', id)
-}
+    if (!exists) {
+      return null
+    }
 
-export async function putTask(task: Task): Promise<void> {
-  const database = await db()
-  await database.put('tasks', task)
-}
-
-export async function removeTasks(ids: string[]): Promise<void> {
-  const database = await db()
-  const transaction = database.transaction('tasks', 'readwrite')
-  await Promise.all(ids.map((id) => transaction.store.delete(id)))
-  await transaction.done
-}
-
-export async function putTimeEntry(entry: TimeEntry): Promise<void> {
-  const database = await db()
-  await database.put('timeEntries', entry)
-}
-
-export async function removeTimeEntries(ids: string[]): Promise<void> {
-  const database = await db()
-  const transaction = database.transaction('timeEntries', 'readwrite')
-  await Promise.all(ids.map((id) => transaction.store.delete(id)))
-  await transaction.done
-}
-
-export async function getTheme(): Promise<Theme | null> {
-  const database = await db()
-  const value = await database.get('settings', 'theme')
-
-  return value === 'light' || value === 'dark' ? value : null
-}
-
-export async function saveTheme(theme: Theme): Promise<void> {
-  const database = await db()
-  await database.put('settings', theme, 'theme')
-}
-
-export async function replaceAll(payload: ExportPayload): Promise<void> {
-  const database = await db()
-  const transaction = database.transaction(['columns', 'tasks', 'timeEntries'], 'readwrite')
-  await transaction.objectStore('columns').clear()
-  await transaction.objectStore('tasks').clear()
-  await transaction.objectStore('timeEntries').clear()
-  await Promise.all([
-    ...payload.columns.map((column) => transaction.objectStore('columns').put(column)),
-    ...payload.tasks.map((task) => transaction.objectStore('tasks').put(task)),
-    ...payload.timeEntries.map((entry) => transaction.objectStore('timeEntries').put(entry)),
-  ])
-  await transaction.done
-}
-
-export async function wipeData(): Promise<void> {
-  const database = await db()
-  const transaction = database.transaction(['columns', 'tasks', 'timeEntries'], 'readwrite')
-  await transaction.objectStore('columns').clear()
-  await transaction.objectStore('tasks').clear()
-  await transaction.objectStore('timeEntries').clear()
-  await transaction.done
+    return await Promise.race([
+      readAll(),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), READ_TIMEOUT_MS)),
+    ])
+  } catch {
+    return null
+  }
 }

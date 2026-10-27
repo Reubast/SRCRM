@@ -27,7 +27,7 @@ jobs:
       - uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ env.PHP_VERSION }}
-          extensions: mbstring, pdo_mysql, xml, ctype, tokenizer, curl, fileinfo, openssl, zip
+          extensions: mbstring, pdo_mysql, pdo_sqlite, sqlite3, xml, ctype, tokenizer, curl, fileinfo, openssl, zip
           coverage: none
 
       - name: Syntax check
@@ -38,6 +38,16 @@ jobs:
 
       - name: Validate composer.json
         run: composer validate --no-check-all --no-check-publish
+
+      - name: Install dev dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Feature tests
+        run: |
+          set -euo pipefail
+          cp .env.example .env
+          php artisan key:generate --ansi
+          php artisan test
 
   deploy:
     name: Deploy
